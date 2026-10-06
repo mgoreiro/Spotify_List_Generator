@@ -64,6 +64,11 @@ struct GeminiRanker {
                 req.httpBody = body
                 let (d, r) = try await URLSession.shared.data(for: req)
                 data = d; status = (r as? HTTPURLResponse)?.statusCode ?? 0; lastModel = model
+                // Clave inválida: cambiar de modelo no sirve de nada; falla enseguida y con un mensaje claro.
+                let body = String(decoding: d, as: UTF8.self)
+                if status == 400 && (body.contains("API_KEY_INVALID") || body.contains("API key not valid")) {
+                    throw AppError.msg("La clave de Gemini no es válida. Revísala en Ajustes.")
+                }
                 if status == 200 || ![503, 429, 404, 400].contains(status) { break }
             }
             if status == 200 { break }
@@ -76,9 +81,15 @@ struct GeminiRanker {
               let parts = (((j["candidates"] as? [[String: Any]])?.first?["content"] as? [String: Any])?["parts"] as? [[String: Any]]),
               let text = parts.compactMap({ $0["text"] as? String }).first,
               let s = text.firstIndex(of: "["), let e = text.lastIndex(of: "]"),
-              let arr = try? JSONDecoder().decode([Pick].self, from: Data(text[s...e].utf8)) else {
+              let raw = (try? JSONSerialization.jsonObject(with: Data(text[s...e].utf8))) as? [[String: Any]] else {
             throw AppError.msg("Gemini devolvió un formato inesperado.")
         }
+        // Tolerante: se descartan los elementos mal formados en vez de invalidar toda la respuesta.
+        let arr = raw.compactMap { d -> Pick? in
+            guard let t = d["title"] as? String, !t.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            return Pick(title: t, artist: (d["artist"] as? String) ?? "")
+        }
+        guard !arr.isEmpty else { throw AppError.msg("Gemini no devolvió ninguna canción utilizable.") }
         return arr
     }
 }

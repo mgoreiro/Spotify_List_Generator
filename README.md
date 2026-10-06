@@ -15,7 +15,7 @@ todo el histórico en una base de datos local.
 - Abrir/reproducir en la app de escritorio de Spotify.
 
 ## Requisitos
-- macOS 14 o superior, Xcode / Swift 5.9+.
+- macOS 14 o superior (Apple Silicon e Intel), Xcode / Swift 5.9+.
 - Cuenta de Spotify. Las apps en *Development Mode* exigen que el propietario tenga Premium.
 - (Opcional) clave gratuita de [Google AI Studio](https://aistudio.google.com/apikey). Sin ella, la lista contiene
   canciones del artista sin criterio de tono.

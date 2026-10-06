@@ -30,16 +30,22 @@ enum Exporter {
             enc.dateEncodingStrategy = .iso8601
             return try enc.encode(rows)
         case .csv:
-            func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+            // Texto entrecomillado; los que empiezan por = + - @ se neutralizan para que Excel/Numbers no los evalúe.
+            func q(_ s: String) -> String {
+                var v = s
+                if let f = v.first, "=+-@\t\r".contains(f) { v = "'" + v }
+                return "\"" + v.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            }
             let iso = ISO8601DateFormatter()
-            var out = "fecha,artista_pedido,tono,canciones_pedidas,estado,posicion,titulo,artista,album,uri,duracion_ms,playlist_url\n"
+            var out = "fecha,artista_pedido,tono,canciones_pedidas,estado,posicion,titulo,artista,album,uri,duracion_ms,playlist_url,error\n"
             for r in rows {
                 let head = [iso.string(from: r.date), q(r.artist), q(r.tone), "\(r.count)", r.status]
+                let tail = [q(r.playlistURL ?? ""), q(r.error ?? "")]
                 if r.tracks.isEmpty {
-                    out += (head + ["", "", "", "", "", "", q(r.error ?? "")]).joined(separator: ",") + "\n"
+                    out += (head + ["", "", "", "", "", ""] + tail).joined(separator: ",") + "\n"
                 }
                 for t in r.tracks {
-                    out += (head + ["\(t.position)", q(t.title), q(t.artist), q(t.album), t.uri, "\(t.durationMs)", q(r.playlistURL ?? "")])
+                    out += (head + ["\(t.position)", q(t.title), q(t.artist), q(t.album), t.uri, "\(t.durationMs)"] + tail)
                         .joined(separator: ",") + "\n"
                 }
             }
