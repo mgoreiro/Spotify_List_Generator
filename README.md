@@ -26,7 +26,7 @@ todo el histórico en una base de datos local.
 ## Puesta en marcha
 1. En <https://developer.spotify.com/dashboard> crea una app (Web API) con el Redirect URI
    `http://127.0.0.1:8888/callback`.
-2. Compila: `./Scripts/make_app.sh` y abre `build/SpotifyListGenerator.app`
+2. Compila e instala en /Applications con `./Scripts/install.sh` (o `./Scripts/make_app.sh` para solo generar `build/SpotifyListGenerator.app`)
    (o `./Scripts/make_dmg.sh` para generar `build/SpotifyListGenerator.dmg`).
 3. En Ajustes (⌘,) pega tu Client ID y pulsa **Conectar**; opcionalmente añade la clave de Gemini.
 
