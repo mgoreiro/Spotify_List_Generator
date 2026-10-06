@@ -204,7 +204,10 @@ struct SettingsView: View {
                 }
             }
             Section("Google Gemini (selección por tono, plan gratuito)") {
-                SecureField("API key", text: $geminiKey).onChange(of: geminiKey) { _, v in Keychain.set(v, for: "geminiKey") }
+                HStack {
+                    SecureField("API key", text: $geminiKey).onSubmit(saveGeminiKey)
+                    Button("Guardar", action: saveGeminiKey)
+                }
                 Picker("Modelo", selection: $geminiModel) {
                     Text("Automático (flash-lite primero)").tag("")
                     ForEach(models, id: \.self) { Text($0).tag($0) }
@@ -242,10 +245,19 @@ struct SettingsView: View {
             if let error { Text(error).foregroundStyle(.red) }
         }
         .formStyle(.grouped).frame(width: 480, height: 640).padding()
+        .onDisappear(perform: saveGeminiKey)
     }
 }
 
 extension SettingsView {
+    /// Se guarda al confirmar o al cerrar Ajustes (no por pulsación) y solo si cambió.
+    func saveGeminiKey() {
+        let key = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key != (Keychain.get("geminiKey") ?? "") else { return }
+        if Keychain.set(key, for: "geminiKey") { error = nil }
+        else { error = "No se pudo guardar la clave en el Llavero." }
+    }
+
     func addTone() {
         let n = newTone.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty, !tones.contains(where: { $0.name.lowercased() == n.lowercased() }) else { return }
