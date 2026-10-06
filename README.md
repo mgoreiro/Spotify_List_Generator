@@ -36,3 +36,7 @@ Los datos viven en `~/Library/Application Support/SpotifyListGenerator/history.s
 El DMG se firma con tu certificado de *Apple Development* si existe (o ad-hoc). No está notarizado, así que en
 otro Mac macOS pedirá confirmación: clic derecho → **Abrir**, o `xattr -dr com.apple.quarantine "/Applications/SpotifyListGenerator.app"`.
 Para distribuirlo sin avisos hace falta un certificado *Developer ID* y notarizar.
+
+## Licencia
+
+MIT — ver [LICENSE](LICENSE).
