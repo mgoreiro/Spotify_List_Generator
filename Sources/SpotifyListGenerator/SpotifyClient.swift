@@ -5,7 +5,15 @@ import Network
 
 enum AppError: LocalizedError {
     case msg(String)
-    var errorDescription: String? { if case .msg(let m) = self { return m }; return nil }
+    /// La playlist se creó en Spotify pero no se pudieron añadir todas las canciones.
+    case partialPlaylist(id: String, url: String, added: Int, reason: String)
+    var errorDescription: String? {
+        switch self {
+        case .msg(let m): return m
+        case .partialPlaylist(_, let url, let added, let reason):
+            return "La playlist se creó en Spotify pero solo se añadieron \(added) canciones (\(reason)). Revísala o bórrala desde Spotify: \(url)"
+        }
+    }
 }
 
 /// Autenticación PKCE (redirect loopback) + llamadas a la Web API de Spotify.
@@ -58,8 +66,10 @@ final class SpotifyClient: ObservableObject {
     }
 
     private func waitForCallback(expectedState: String) async throws -> String {
+        // Solo loopback: otros equipos de la red no pueden conectar con el listener.
         let params = NWParameters.tcp
-        let l = try NWListener(using: params, on: 8888)
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: 8888)
+        let l = try NWListener(using: params)
         listener = l
         return try await withCheckedThrowingContinuation { cont in
             var done = false
@@ -72,17 +82,28 @@ final class SpotifyClient: ObservableObject {
             l.newConnectionHandler = { conn in
                 conn.start(queue: .main)
                 conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
+                    func reply(_ status: String, _ text: String) {
+                        let body = "<html><body style='font-family:-apple-system;text-align:center;margin-top:20%'><h2>\(text)</h2></body></html>"
+                        let resp = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                        conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
+                    }
                     let req = String(decoding: data ?? Data(), as: UTF8.self)
                     let path = req.split(separator: " ").dropFirst().first.map(String.init) ?? ""
-                    let items = URLComponents(string: "http://x" + path)?.queryItems ?? []
-                    let body = "<html><body style='font-family:-apple-system;text-align:center;margin-top:20%'><h2>Conectado. Ya puedes volver a la app.</h2></body></html>"
-                    let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
-                    conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
-                    if let code = items.first(where: { $0.name == "code" })?.value,
-                       items.first(where: { $0.name == "state" })?.value == expectedState {
+                    let comps = URLComponents(string: "http://x" + path)
+                    let items = comps?.queryItems ?? []
+                    func value(_ n: String) -> String? { items.first(where: { $0.name == n })?.value }
+                    // Cualquier cosa que no sea el callback con nuestro "state" se ignora sin abortar el login.
+                    guard comps?.path == "/callback", value("state") == expectedState else {
+                        reply("400 Bad Request", "Petición no válida."); return
+                    }
+                    if let code = value("code") {
+                        reply("200 OK", "Conectado. Ya puedes volver a la app.")
                         finish(.success(code))
-                    } else if path.hasPrefix("/callback") {
-                        finish(.failure(AppError.msg("Autorización denegada o inválida.")))
+                    } else if value("error") != nil {
+                        reply("200 OK", "Autorización denegada. Puedes cerrar esta pestaña.")
+                        finish(.failure(AppError.msg("Autorización denegada en Spotify.")))
+                    } else {
+                        reply("400 Bad Request", "Petición no válida.")
                     }
                 }
             }
@@ -140,6 +161,10 @@ final class SpotifyClient: ObservableObject {
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if status == 429, attempt < 2 {
                 let wait = Double((resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After") ?? "2") ?? 2
+                // Esperas largas (cuota agotada) no se bloquean: se informa al usuario.
+                guard wait <= 30 else {
+                    throw AppError.msg("Spotify pide esperar \(Int(wait)) s por el límite de uso. Inténtalo más tarde.")
+                }
                 try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)); continue
             }
             guard (200..<300).contains(status) else {
@@ -184,10 +209,14 @@ final class SpotifyClient: ObservableObject {
     func createPlaylist(name: String, description: String, uris: [String]) async throws -> (id: String, url: String) {
         let p = try await call("POST", "/me/playlists", body: ["name": name, "description": description, "public": false])
         guard let id = p["id"] as? String else { throw AppError.msg("Spotify no devolvió el id de la playlist.") }
-        for chunk in stride(from: 0, to: uris.count, by: 100).map({ Array(uris[$0..<min($0 + 100, uris.count)]) }) {
-            try await call("POST", "/playlists/\(id)/items", body: ["uris": chunk])
-        }
         let url = (p["external_urls"] as? [String: Any])?["spotify"] as? String ?? "https://open.spotify.com/playlist/\(id)"
+        var added = 0
+        for start in stride(from: 0, to: uris.count, by: 100) {
+            let chunk = Array(uris[start..<min(start + 100, uris.count)])
+            do { try await call("POST", "/playlists/\(id)/items", body: ["uris": chunk]) }
+            catch { throw AppError.partialPlaylist(id: id, url: url, added: added, reason: error.localizedDescription) }
+            added += chunk.count
+        }
         return (id, url)
     }
 

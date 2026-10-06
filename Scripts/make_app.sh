@@ -2,10 +2,12 @@
 # Compila y empaqueta SpotifyListGenerator.app en ./build
 set -e
 cd "$(dirname "$0")/.."
-swift build -c release
+# Binario universal (Apple Silicon + Intel)
+swift build -c release --arch arm64 --arch x86_64
+BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 APP=build/SpotifyListGenerator.app
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
-cp .build/release/SpotifyListGenerator "$APP/Contents/MacOS/"
+cp "$BIN/SpotifyListGenerator" "$APP/Contents/MacOS/"
 # Icono: se genera por código y se convierte a .icns
 mkdir -p "$APP/Contents/Resources" build/AppIcon.iconset
 swift Scripts/make_icon.swift build/icon_1024.png
@@ -31,4 +33,4 @@ PL
 # Firma estable (evita que el Llavero vuelva a pedir permiso tras cada build); ad-hoc si no hay certificado.
 IDENTITY=$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development/ {print $2; exit}')
 codesign --force --sign "${IDENTITY:--}" "$APP"
-echo "OK → $APP"
+echo "OK → $APP ($(lipo -archs "$APP/Contents/MacOS/SpotifyListGenerator"))"
