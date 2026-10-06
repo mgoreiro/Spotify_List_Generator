@@ -76,7 +76,7 @@ struct Generator {
         }
         for p in picks {
             if let t = best[Self.baseTitle(p.title)], t.artist.contains(found.name) { add(t) }
-            else if let t = try? await resolve(p) { add(t) }
+            else if let t = try? await resolve(p, mainArtist: found, includeSimilar: includeSimilar) { add(t) }
             if result.count == count { break }
         }
         // 3) Rellena con candidatas si faltan (originales antes que versiones).
@@ -85,9 +85,18 @@ struct Generator {
         return result
     }
 
-    /// Resuelve una propuesta de Gemini en Spotify, prefiriendo la versión original.
-    private func resolve(_ p: GeminiRanker.Pick) async throws -> TrackInfo? {
+    /// Resuelve una propuesta de Gemini en Spotify. Solo acepta resultados cuyo título base y artista
+    /// coinciden con la propuesta (Spotify devuelve aproximaciones), y prefiere la versión original.
+    private func resolve(_ p: GeminiRanker.Pick, mainArtist: (id: String, name: String), includeSimilar: Bool) async throws -> TrackInfo? {
+        let wantTitle = Self.baseTitle(p.title)
+        let wantArtist = Self.fold(p.artist)
         let r = try await spotify.searchTracks(query: "track:\"\(p.title)\" artist:\"\(p.artist)\"")
+            .filter { Self.baseTitle($0.title) == wantTitle }
+            .filter { t in
+                if !includeSimilar { return t.artistIDs.contains(mainArtist.id) }   // modo estricto: solo el artista pedido
+                let a = Self.fold(t.artist)
+                return a.contains(wantArtist) || wantArtist.contains(a) || t.artistIDs.contains(mainArtist.id)
+            }
         return r.min { Self.variantScore($0) < Self.variantScore($1) }
     }
 
@@ -105,8 +114,11 @@ struct Generator {
         t = t.replacingOccurrences(of: #"\s[-–]\s.*("# + variantWords + #").*$"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"[\(\[][^\)\]]*("# + variantWords + #"|feat|ft\.|with)[^\)\]]*[\)\]]"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s(feat|ft|featuring)\b.*$"#, with: "", options: .regularExpression)
-        t = t.replacingOccurrences(of: #"[^a-z0-9 ]"#, with: "", options: .regularExpression)
-        return t.split(separator: " ").joined(separator: " ")
+        // Conserva letras y números de cualquier alfabeto (japonés, cirílico, árabe…), no solo ASCII.
+        t = t.replacingOccurrences(of: #"[^\p{L}\p{N} ]"#, with: "", options: .regularExpression)
+        let base = t.split(separator: " ").joined(separator: " ")
+        // Si el título era solo signos, no colapsar todo en "": usa el título original normalizado.
+        return base.isEmpty ? fold(title).trimmingCharacters(in: .whitespaces) : base
     }
 
     /// 0 = original, 1 = remaster/otras ediciones, 2 = remix/directo/medley/acústico.

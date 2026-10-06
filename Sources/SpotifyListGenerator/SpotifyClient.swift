@@ -99,12 +99,16 @@ final class SpotifyClient: ObservableObject {
         req.httpBody = form.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")" }
             .joined(separator: "&").data(using: .utf8)
         let (data, resp) = try await URLSession.shared.data(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200,
-              let j = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let token = j["access_token"] as? String else {
-            Keychain.set(nil, for: "spotifyRefresh"); isConnected = false
-            throw AppError.msg("No se pudo autenticar con Spotify: \(String(decoding: data, as: UTF8.self))")
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard status == 200, let token = json?["access_token"] as? String else {
+            // Solo un invalid_grant significa que el refresh token ya no sirve; un 5xx/429/red es transitorio.
+            if json?["error"] as? String == "invalid_grant" {
+                Keychain.set(nil, for: "spotifyRefresh"); isConnected = false
+            }
+            throw AppError.msg("No se pudo autenticar con Spotify (\(status)): \(String(decoding: data, as: UTF8.self).prefix(300))")
         }
+        let j = json ?? [:]
         accessToken = token
         expiry = Date().addingTimeInterval((j["expires_in"] as? Double ?? 3600) - 60)
         if let r = j["refresh_token"] as? String { Keychain.set(r, for: "spotifyRefresh") }
