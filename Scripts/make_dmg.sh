@@ -8,6 +8,7 @@ STAGE=build/dmg
 rm -rf "$STAGE" build/SpotifyListGenerator.dmg
 mkdir -p "$STAGE"
 cp -R build/SpotifyListGenerator.app "$STAGE/"
+cp LICENSE "$STAGE/LICENSE.txt"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO build/SpotifyListGenerator.dmg >/dev/null
 rm -rf "$STAGE"
