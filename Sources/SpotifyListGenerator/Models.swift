@@ -27,18 +27,21 @@ final class GenerationRequest {
     var tone: String
     var count: Int
     var includeSimilar: Bool
+    /// Canción de referencia (opcional): se buscan canciones parecidas a ella con el tono indicado.
+    var seedSong: String?
     var status: String        // pending | done | failed
     var errorMessage: String?
     @Relationship(deleteRule: .cascade, inverse: \SavedPlaylist.request)
     var playlist: SavedPlaylist?
 
-    init(artist: String, tone: String, count: Int, includeSimilar: Bool) {
+    init(artist: String, tone: String, count: Int, includeSimilar: Bool, seedSong: String? = nil) {
         self.id = UUID()
         self.createdAt = .now
         self.artist = artist
         self.tone = tone
         self.count = count
         self.includeSimilar = includeSimilar
+        self.seedSong = seedSong
         self.status = "pending"
     }
 }

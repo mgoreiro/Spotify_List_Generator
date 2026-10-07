@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var tone = "Tristes"
     @State private var count = 20
     @State private var includeSimilar = false
+    @State private var seedSong = ""
     @State private var busy = false
     @State private var selection: GenerationRequest?
     @State private var toDelete: GenerationRequest?
@@ -24,6 +25,7 @@ struct ContentView: View {
                             Text(r.artist).font(.headline)
                             if r.status == "failed" { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
                         }
+                        if let seed = r.seedSong { Text("≈ \(seed)").font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                         Text("\(r.tone) · \(r.count) · \(r.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -46,7 +48,7 @@ struct ContentView: View {
                 form.padding()
                 Divider()
                 if let r = selection { DetailView(request: r, tones: tones.map(\.name), busy: busy, requestDelete: { toDelete = r },
-                                           regenerate: { t, c, sim in run(artist: r.artist, tone: t, count: c, similar: sim) }) }
+                                           regenerate: { t, c, sim, seed in run(artist: r.artist, tone: t, count: c, similar: sim, seed: seed) }) }
                 else { ContentUnavailableView("Selecciona una petición del histórico", systemImage: "music.note.list") }
             }
         }
@@ -61,35 +63,48 @@ struct ContentView: View {
     }
 
     private var form: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading) { Text("Artista").font(.caption); TextField("Juan Luis Guerra", text: $artist).frame(minWidth: 180) }
-            VStack(alignment: .leading) {
-                Text("Tono").font(.caption)
-                Picker("", selection: $tone) { ForEach(tones.map(\.name), id: \.self) { Text($0).tag($0) } }.labelsHidden()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading) { Text("Artista").font(.caption); TextField("Juan Luis Guerra", text: $artist).frame(minWidth: 180) }
+                VStack(alignment: .leading) {
+                    Text("Tono").font(.caption)
+                    Picker("", selection: $tone) { ForEach(tones.map(\.name), id: \.self) { Text($0).tag($0) } }.labelsHidden()
+                }
+                VStack(alignment: .leading) {
+                    Text("Canciones").font(.caption)
+                    Picker("", selection: $count) { ForEach([10, 20, 50], id: \.self) { Text("\($0)").tag($0) } }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                }
+                Toggle("Incluir similares", isOn: $includeSimilar)
+                Spacer()
             }
-            VStack(alignment: .leading) {
-                Text("Canciones").font(.caption)
-                Picker("", selection: $count) { ForEach([10, 20, 50], id: \.self) { Text("\($0)").tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading) {
+                    Text("Canción de referencia (opcional)").font(.caption)
+                    TextField("Busca canciones parecidas a esta, de ese artista", text: $seedSong)
+                }
+                if busy { ProgressView().controlSize(.small) }
+                Button("Generar lista") { generate() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(busy || artist.trimmingCharacters(in: .whitespaces).isEmpty || !spotify.isConnected)
             }
-            Toggle("Incluir similares", isOn: $includeSimilar)
-            Spacer()
-            if busy { ProgressView().controlSize(.small) }
-            Button("Generar lista") { generate() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(busy || artist.trimmingCharacters(in: .whitespaces).isEmpty || !spotify.isConnected)
+            if !seedSong.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text(includeSimilar ? "Se buscarán canciones parecidas a la referencia sobre todo de artistas similares."
+                                    : "Se buscarán canciones parecidas a la referencia solo de este artista. Requiere la clave de Gemini.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !spotify.isConnected { Text("Conecta Spotify en Ajustes (⌘,)").font(.caption).foregroundStyle(.orange) }
         }
     }
 
     private func generate() {
-        run(artist: artist.trimmingCharacters(in: .whitespaces), tone: tone, count: count, similar: includeSimilar)
+        run(artist: artist.trimmingCharacters(in: .whitespaces), tone: tone, count: count, similar: includeSimilar, seed: seedSong)
     }
 
-    private func run(artist: String, tone: String, count: Int, similar: Bool) {
+    private func run(artist: String, tone: String, count: Int, similar: Bool, seed: String) {
         busy = true
         Task {
-            await Generator(spotify: spotify, context: context).run(artist: artist, tone: tone, count: count, includeSimilar: similar)
+            await Generator(spotify: spotify, context: context).run(artist: artist, tone: tone, count: count, includeSimilar: similar, seedSong: seed)
             selection = history.first
             busy = false
         }
@@ -108,18 +123,20 @@ struct DetailView: View {
     let tones: [String]
     let busy: Bool
     let requestDelete: () -> Void
-    let regenerate: (String, Int, Bool) -> Void
+    let regenerate: (String, Int, Bool, String) -> Void
     @State private var message: String?
     @State private var showRegen = false
     @State private var regenTone = ""
     @State private var regenCount = 20
     @State private var regenSimilar = false
+    @State private var regenSeed = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading) {
                     Text("\(request.artist) — \(request.tone)").font(.title2.bold())
+                    if let seed = request.seedSong { Text("Similares a «\(seed)»").foregroundStyle(.secondary) }
                     Text("\(request.count) canciones pedidas · \(request.createdAt.formatted())").foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -140,7 +157,7 @@ struct DetailView: View {
                     }
                 }
                 Button("Regenerar…", systemImage: "arrow.clockwise") {
-                    regenTone = request.tone; regenCount = request.count; regenSimilar = request.includeSimilar
+                    regenTone = request.tone; regenCount = request.count; regenSimilar = request.includeSimilar; regenSeed = request.seedSong ?? ""
                     showRegen = true
                 }
                 .disabled(busy || !spotify.isConnected)
@@ -173,9 +190,10 @@ extension DetailView {
             Picker("Canciones", selection: $regenCount) { ForEach([10, 20, 50], id: \.self) { Text("\($0)").tag($0) } }
                 .pickerStyle(.segmented)
             Toggle("Incluir similares", isOn: $regenSimilar)
-            HStack { Spacer(); Button("Generar") { showRegen = false; regenerate(regenTone, regenCount, regenSimilar) }.keyboardShortcut(.defaultAction) }
+            TextField("Canción de referencia (opcional)", text: $regenSeed)
+            HStack { Spacer(); Button("Generar") { showRegen = false; regenerate(regenTone, regenCount, regenSimilar, regenSeed) }.keyboardShortcut(.defaultAction) }
         }
-        .padding().frame(width: 300)
+        .padding().frame(width: 320)
     }
 }
 
