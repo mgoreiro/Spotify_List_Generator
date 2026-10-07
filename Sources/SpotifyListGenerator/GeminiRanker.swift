@@ -26,13 +26,22 @@ struct GeminiRanker {
             .sorted()
     }
 
-    func pick(artist: String, tone: String, count: Int, includeSimilar: Bool, candidates: [TrackInfo]) async throws -> [Pick] {
+    func pick(artist: String, tone: String, count: Int, includeSimilar: Bool, seedSong: String? = nil, candidates: [TrackInfo]) async throws -> [Pick] {
         let list = candidates.map { "- \($0.title) — \($0.artist)" }.joined(separator: "\n")
-        let scope = includeSimilar
-            ? "Mezcla canciones del artista (mayoría) con artistas similares que encajen con el tono."
-            : "Usa SOLO canciones del artista indicado."
+        let intro: String, scope: String
+        if let seedSong {
+            intro = "Crea una lista de reproducción de exactamente \(count) canciones SIMILARES a la canción de referencia \"\(seedSong)\" (de \(artist)) y con el tono/estado de ánimo \"\(tone)\". Valora estilo, ritmo, instrumentación, tema de la letra y ambiente. NO incluyas la canción de referencia."
+            scope = includeSimilar
+                ? "Elige sobre todo canciones de ARTISTAS SIMILARES a \(artist) que encajen con la referencia (como mucho unas pocas del propio artista)."
+                : "Usa SOLO canciones del artista \(artist)."
+        } else {
+            intro = "Crea una lista de reproducción de exactamente \(count) canciones para el artista \"\(artist)\" con el tono/estado de ánimo \"\(tone)\"."
+            scope = includeSimilar
+                ? "Mezcla canciones del artista (mayoría) con artistas similares que encajen con el tono."
+                : "Usa SOLO canciones del artista indicado."
+        }
         let prompt = """
-        Crea una lista de reproducción de exactamente \(count) canciones para el artista "\(artist)" con el tono/estado de ánimo "\(tone)". \(scope)
+        \(intro) \(scope)
         Ordénalas para que la lista fluya bien. Prioriza las candidatas disponibles en Spotify (abajo) pero puedes añadir otras reales que conozcas con certeza; no inventes canciones.
         Candidatas:
         \(list.isEmpty ? "(ninguna)" : list)

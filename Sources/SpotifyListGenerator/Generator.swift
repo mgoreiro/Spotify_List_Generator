@@ -8,12 +8,13 @@ struct Generator {
     let spotify: SpotifyClient
     let context: ModelContext
 
-    func run(artist: String, tone: String, count: Int, includeSimilar: Bool) async {
-        let req = GenerationRequest(artist: artist, tone: tone, count: count, includeSimilar: includeSimilar)
+    func run(artist: String, tone: String, count: Int, includeSimilar: Bool, seedSong: String? = nil) async {
+        let seed = seedSong?.trimmingCharacters(in: .whitespaces).nilIfEmpty
+        let req = GenerationRequest(artist: artist, tone: tone, count: count, includeSimilar: includeSimilar, seedSong: seed)
         context.insert(req)
         try? context.save()   // la petición queda registrada aunque falle
         var built: [TrackInfo] = []
-        let name = "\(artist) · \(tone) (\(count))"
+        let name = seed.map { "\(artist) · similares a «\($0)» · \(tone) (\(count))" } ?? "\(artist) · \(tone) (\(count))"
         func store(_ tracks: [TrackInfo], id: String, url: String) {
             let pl = SavedPlaylist(name: name)
             pl.spotifyPlaylistID = id
@@ -25,7 +26,7 @@ struct Generator {
             req.playlist = pl
         }
         do {
-            built = try await build(artist: artist, tone: tone, count: count, includeSimilar: includeSimilar)
+            built = try await build(artist: artist, tone: tone, count: count, includeSimilar: includeSimilar, seedSong: seed)
             let created = try await spotify.createPlaylist(
                 name: name, description: "Generada por Spotify List Generator — \(tone)", uris: built.map(\.uri))
             store(built, id: created.id, url: created.url)
@@ -43,7 +44,11 @@ struct Generator {
         try? context.save()
     }
 
-    private func build(artist: String, tone: String, count: Int, includeSimilar: Bool) async throws -> [TrackInfo] {
+    private func build(artist: String, tone: String, count: Int, includeSimilar: Bool, seedSong: String?) async throws -> [TrackInfo] {
+        // La similitud con una canción la decide el modelo: sin clave de Gemini no se puede honrar.
+        if seedSong != nil, GeminiRanker() == nil {
+            throw AppError.msg("La canción de referencia necesita la clave de Gemini (Ajustes ⌘,). Sin ella solo se puede generar por artista y tono.")
+        }
         guard let found = try await spotify.searchArtist(artist) else {
             throw AppError.msg("No se encontró el artista “\(artist)” en Spotify.")
         }
@@ -72,6 +77,16 @@ struct Generator {
         // Si no hay ni una candidata y hubo errores, el problema es la API (sesión, límite, red), no el artista.
         if candidates.isEmpty, let e = searchError { throw e }
 
+        // Canción de referencia: se normaliza con el título real de Spotify y se excluye del resultado.
+        var seedTitle = seedSong
+        var seedBase: String?
+        if let seedSong {
+            seedBase = Self.baseTitle(seedSong)
+            if let c = best[Self.baseTitle(seedSong)] { seedTitle = c.title }
+            else if let hit = try? await spotify.searchTracks(query: "track:\"\(seedSong)\" artist:\"\(found.name)\"")
+                .first(where: { Self.baseTitle($0.title) == Self.baseTitle(seedSong) }) { seedTitle = hit.title }
+        }
+
         guard let ranker = GeminiRanker() else {
             // Sin clave de Gemini: solo candidatas del artista, sin criterio de tono. Originales primero.
             guard !candidates.isEmpty else { throw AppError.msg("Sin resultados para ese artista.") }
@@ -81,9 +96,10 @@ struct Generator {
         }
         // 2) Gemini elige entre las candidatas y propone extras.
         let picks = try await ranker.pick(artist: found.name, tone: tone, count: count,
-                                          includeSimilar: includeSimilar, candidates: candidates)
+                                          includeSimilar: includeSimilar, seedSong: seedTitle, candidates: candidates)
         var result: [TrackInfo] = []
         var seen = Set<String>()   // títulos base + artista principal ya incluidos
+        if let seedBase { seen.insert(seedBase + "|" + found.id) }   // la canción de referencia no entra en la lista
         func add(_ t: TrackInfo) {
             let id = Self.baseTitle(t.title) + "|" + (t.artistIDs.first ?? t.artist)
             if seen.insert(id).inserted { result.append(t) }
@@ -167,4 +183,8 @@ struct Generator {
             || matches(title, #"\s(?:feat|ft|featuring)\b"#) || matches(album, #"\bremaster(?:ed)?\b"#) { return 1 }
         return 0
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
